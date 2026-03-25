@@ -91,61 +91,218 @@ class PipelineMetrics:
 
 
 class IncrementalChunker:
-    def __init__(self, min_chars=35, max_chars=110):
+    def __init__(
+        self,
+        first_min_words=6,
+        first_target_words=8,
+        later_min_words=10,
+        later_target_words=14,
+        max_words=22,
+        max_chars=170,
+        lookahead_words=8,
+        first_chunk_max_wait_s=1.0,
+        later_chunk_max_wait_s=1.6,
+        allow_comma_boundaries=True,
+    ):
         self.buf = ""
-        self.min_chars = min_chars
+        self.first_min_words = first_min_words
+        self.first_target_words = first_target_words
+        self.later_min_words = later_min_words
+        self.later_target_words = later_target_words
+        self.max_words = max_words
         self.max_chars = max_chars
+        self.lookahead_words = lookahead_words
+        self.first_chunk_max_wait_s = first_chunk_max_wait_s
+        self.later_chunk_max_wait_s = later_chunk_max_wait_s
+        self.allow_comma_boundaries = allow_comma_boundaries
+        self.emitted_chunks = 0
+        self.buffer_start_s = 0.0
 
-    def push(self, new_text: str) -> List[str]:
+    def push(self, new_text: str, now_s: Optional[float] = None) -> List[str]:
+        timestamp = now_s if now_s is not None else time.perf_counter()
+        if not self.buf.strip() and new_text.strip():
+            self.buffer_start_s = timestamp
         self.buf += new_text
         out = []
 
         while True:
-            if not self.buf.strip():
+            candidate = self._select_chunk(timestamp)
+            if candidate is None:
                 break
+            out.append(candidate)
 
-            if len(self.buf) >= self.max_chars:
-                idx = self._best_split(self.buf[: self.max_chars])
-                out.append(self.buf[:idx].strip())
-                self.buf = self.buf[idx:].lstrip()
-                continue
-
-            if len(self.buf) >= self.min_chars and re.search(r"[.!?]\s*$", self.buf):
-                out.append(self.buf.strip())
-                self.buf = ""
-                continue
-
-            split_idx = self._comma_split(self.buf)
-            if split_idx is not None and len(self.buf) >= max(self.min_chars, 55):
-                out.append(self.buf[:split_idx].strip())
-                self.buf = self.buf[split_idx:].lstrip()
-                continue
-
-            break
-
-        return [x for x in out if x]
+        return out
 
     def flush(self) -> Optional[str]:
         text = self.buf.strip()
         self.buf = ""
+        self.buffer_start_s = 0.0
+        if text:
+            self.emitted_chunks += 1
         return text if text else None
 
-    def _best_split(self, text: str) -> int:
-        candidates = []
-        for pat in [". ", "! ", "? ", "; ", ": ", ", "]:
-            idx = text.rfind(pat)
-            if idx != -1:
-                candidates.append(idx + 1)
-        if candidates:
-            return max(candidates)
-        space_idx = text.rfind(" ")
-        return space_idx if space_idx != -1 else len(text)
-
-    def _comma_split(self, text: str) -> Optional[int]:
-        matches = list(re.finditer(r"[,;:]\s+", text))
-        if not matches:
+    def _select_chunk(self, now_s: float) -> Optional[str]:
+        stripped = self.buf.strip()
+        if not stripped:
             return None
-        return matches[-1].end()
+
+        words = self._word_spans(self.buf)
+        if not words:
+            return None
+
+        min_words = self.first_min_words if self.emitted_chunks == 0 else self.later_min_words
+        target_words = self.first_target_words if self.emitted_chunks == 0 else self.later_target_words
+        max_wait_s = (
+            self.first_chunk_max_wait_s if self.emitted_chunks == 0 else self.later_chunk_max_wait_s
+        )
+        waited_s = now_s - self.buffer_start_s if self.buffer_start_s else 0.0
+
+        force_cut = (
+            len(words) >= self.max_words
+            or len(self.buf) >= self.max_chars
+            or (len(words) >= min_words and waited_s >= max_wait_s)
+        )
+
+        if len(words) < min_words and not force_cut:
+            return None
+
+        best_idx = self._best_boundary(words, min_words, target_words, force_cut=force_cut)
+        if best_idx is None:
+            if not force_cut:
+                return None
+            best_idx = self._fallback_boundary(words)
+
+        chunk = self.buf[:best_idx].strip()
+        if not chunk:
+            return None
+
+        self.buf = self.buf[best_idx:].lstrip()
+        self.emitted_chunks += 1
+        self.buffer_start_s = now_s if self.buf.strip() else 0.0
+        return chunk
+
+    def _best_boundary(
+        self,
+        words: List[re.Match],
+        min_words: int,
+        target_words: int,
+        force_cut: bool,
+    ) -> Optional[int]:
+        best_score = None
+        best_idx = None
+
+        for i, match in enumerate(words, start=1):
+            if i < min_words and not force_cut:
+                continue
+
+            end_idx = match.end()
+            segment = self.buf[:end_idx]
+            score = self._boundary_score(segment, i, target_words, force_cut=force_cut)
+            if score is None:
+                continue
+
+            if best_score is None or score > best_score:
+                best_score = score
+                best_idx = end_idx
+
+        return best_idx
+
+    def _boundary_score(
+        self,
+        text: str,
+        word_count: int,
+        target_words: int,
+        force_cut: bool,
+    ) -> Optional[float]:
+        stripped = text.rstrip()
+        if not stripped:
+            return None
+
+        last_char = stripped[-1]
+        score = 0.0
+
+        if re.search(r"[.!?][\"')\]]?$", stripped):
+            score += 5.0
+        elif re.search(r"[:;\n][\"')\]]?$", stripped):
+            score += 4.0
+        elif last_char == "," and self.allow_comma_boundaries:
+            score += 2.0
+        elif last_char == "," and not self.allow_comma_boundaries and not force_cut:
+            return None
+
+        if self._ends_with_complete_clause(stripped):
+            score += 3.0
+
+        if word_count < max(1, target_words - 2):
+            score -= 4.0
+        elif word_count <= target_words + 2:
+            score += 3.0
+        else:
+            score += max(0.0, 2.0 - 0.35 * (word_count - target_words - 2))
+
+        if self._ends_on_bad_split(stripped):
+            score -= 4.0
+
+        if not re.search(r"[.!?,:;\n][\"')\]]?$", stripped):
+            score -= 1.0
+
+        remaining_words = len(self._word_spans(self.buf[len(text) :]))
+        if 0 < remaining_words <= self.lookahead_words:
+            next_text = self.buf[len(text) :].lstrip()
+            if next_text and re.search(r"^[a-z]", next_text):
+                score -= 1.0
+
+        return score
+
+    def _fallback_boundary(self, words: List[re.Match]) -> int:
+        cutoff = min(len(words), max(self.first_min_words, self.later_min_words))
+        if len(words) >= self.max_words:
+            cutoff = self.max_words
+        elif len(words) > self.lookahead_words:
+            cutoff = max(cutoff, len(words) - self.lookahead_words)
+        return words[cutoff - 1].end()
+
+    def _word_spans(self, text: str) -> List[re.Match]:
+        return list(re.finditer(r"\S+", text))
+
+    def _ends_with_complete_clause(self, text: str) -> bool:
+        normalized = text.strip().lower()
+        if not normalized:
+            return False
+        if re.search(r"[.!?:;][\"')\]]?$", normalized):
+            return True
+        if normalized.endswith(","):
+            return len(self._word_spans(normalized)) >= 8
+        return False
+
+    def _ends_on_bad_split(self, text: str) -> bool:
+        tokens = re.findall(r"[A-Za-z']+", text.lower())
+        if not tokens:
+            return False
+        return tokens[-1] in {
+            "and",
+            "or",
+            "but",
+            "to",
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "of",
+            "for",
+            "with",
+            "that",
+            "this",
+            "these",
+            "those",
+            "my",
+            "your",
+            "our",
+            "their",
+        }
 
 
 def simulated_llm_stream(
@@ -362,7 +519,18 @@ def run_pipeline(args):
     warmup_if_needed(worker, encoded_prompt, args)
     metrics.session_ready_s = time.perf_counter()
 
-    chunker = IncrementalChunker(min_chars=args.min_chars, max_chars=args.max_chars)
+    chunker = IncrementalChunker(
+        first_min_words=args.first_min_words,
+        first_target_words=args.first_target_words,
+        later_min_words=args.later_min_words,
+        later_target_words=args.later_target_words,
+        max_words=args.max_words,
+        max_chars=args.max_chars,
+        lookahead_words=args.lookahead_words,
+        first_chunk_max_wait_s=args.first_chunk_max_wait_s,
+        later_chunk_max_wait_s=args.later_chunk_max_wait_s,
+        allow_comma_boundaries=args.allow_comma_boundaries,
+    )
     transport = AgentTransport(
         sample_rate=args.target_sr,
         frame_ms=args.frame_ms,
@@ -445,7 +613,7 @@ def run_pipeline(args):
         char_delay_s=args.char_delay_s,
         word_delay_s=args.word_delay_s,
     ):
-        ready_chunks = chunker.push(piece)
+        ready_chunks = chunker.push(piece, now_s=time.perf_counter())
         for chunk in ready_chunks:
             emit_chunk(chunk)
 
@@ -555,8 +723,30 @@ def build_parser():
     parser.add_argument("--char-delay-s", type=float, default=0.025)
     parser.add_argument("--word-delay-s", type=float, default=0.08)
 
-    parser.add_argument("--min-chars", type=int, default=35)
-    parser.add_argument("--max-chars", type=int, default=110)
+    parser.add_argument("--first-min-words", type=int, default=6)
+    parser.add_argument("--first-target-words", type=int, default=8)
+    parser.add_argument("--later-min-words", type=int, default=10)
+    parser.add_argument("--later-target-words", type=int, default=14)
+    parser.add_argument("--max-words", type=int, default=22)
+    parser.add_argument("--max-chars", type=int, default=170)
+    parser.add_argument("--lookahead-words", type=int, default=8)
+    parser.add_argument(
+        "--first-chunk-max-wait-s",
+        type=float,
+        default=1.0,
+        help="Force a first chunk once the buffered text has waited this long",
+    )
+    parser.add_argument(
+        "--later-chunk-max-wait-s",
+        type=float,
+        default=1.6,
+        help="Force later chunks once the buffered text has waited this long",
+    )
+    parser.add_argument(
+        "--allow-comma-boundaries",
+        action="store_true",
+        help="Allow commas as weak candidate boundaries in the scoring chunker",
+    )
     parser.add_argument(
         "--max-pending-chunks",
         type=int,
