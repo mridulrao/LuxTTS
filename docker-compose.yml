@@ -1,0 +1,28 @@
+services:
+  luxtts-ws:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: luxtts-ws
+    ports:
+      - "8065:8765"
+    volumes:
+      - ./zipvoice:/voices
+      - ./.cache/huggingface:/models/huggingface
+      - ./.cache/torch:/models/torch
+    command:
+      - python
+      - -m
+      - zipvoice.ws_tts_server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8765"
+      - --device
+      - cpu
+      - --reference-dir
+      - /voices
+      - --prompt-audio
+      - shahrukh_voice.mp3
+      - --prewarm
+    restart: unless-stopped

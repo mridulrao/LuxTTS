@@ -1,0 +1,17 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.DS_Store
+build
+dist
+results
+streamed_output_cpu.wav
+ws_client_test.wav
+out_t*.wav
