@@ -480,7 +480,7 @@ def build_parser():
     parser.add_argument(
         "--trim-leading-ms",
         type=int,
-        default=20,
+        default=30,
         help="Trim a small leading transient from each synthesized chunk",
     )
     parser.add_argument(
