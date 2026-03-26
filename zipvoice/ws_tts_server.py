@@ -408,12 +408,12 @@ def build_parser():
         help="Prewarm the model on startup when a default prompt audio is available",
     )
     parser.add_argument("--cpu-threads", type=int, default=8)
-    parser.add_argument("--ref-duration", type=float, default=4.0)
+    parser.add_argument("--ref-duration", type=float, default=3.0)
     parser.add_argument("--rms", type=float, default=0.01)
-    parser.add_argument("--num-steps", type=int, default=2)
+    parser.add_argument("--num-steps", type=int, default=4)
     parser.add_argument("--t-shift", type=float, default=0.5)
     parser.add_argument("--guidance-scale", type=float, default=2.0)
-    parser.add_argument("--speed", type=float, default=1.0)
+    parser.add_argument("--speed", type=float, default=0.85)
     parser.add_argument("--return-smooth", action="store_true")
     parser.add_argument(
         "--trim-leading-ms",

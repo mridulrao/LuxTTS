@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu24.04
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 ARG TORCH_VERSION=2.5.0
 ARG TORCHAUDIO_VERSION=2.5.0
@@ -21,7 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
-    python3-dev \
     ffmpeg \
     git \
     espeak-ng \
@@ -30,20 +29,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
-
 COPY requirements.gpu.txt /app/requirements.gpu.txt
 
-RUN python -m venv "$VIRTUAL_ENV" && \
-    python -m pip install --upgrade pip setuptools wheel && \
-    python -m pip install \
+RUN python3 -m venv "$VIRTUAL_ENV" && \
+    "$VIRTUAL_ENV/bin/pip" install --upgrade pip setuptools wheel && \
+    "$VIRTUAL_ENV/bin/pip" install \
     --index-url https://download.pytorch.org/whl/cu124 \
     "torch==${TORCH_VERSION}" \
     "torchaudio==${TORCHAUDIO_VERSION}" && \
-    python -m pip install \
+    "$VIRTUAL_ENV/bin/pip" install \
     "k2==${K2_VERSION}" \
     -f https://k2-fsa.github.io/k2/cuda.html && \
-    python -m pip install -r /app/requirements.gpu.txt
+    "$VIRTUAL_ENV/bin/pip" install -r /app/requirements.gpu.txt
 
 COPY . /app
 
@@ -51,4 +48,4 @@ RUN mkdir -p /voices /models/huggingface /models/torch
 
 EXPOSE 8765
 
-CMD ["python", "-m", "zipvoice.ws_tts_server", "--host", "0.0.0.0", "--port", "8765", "--device", "cuda", "--reference-dir", "/voices"]
+CMD ["python3", "-m", "zipvoice.ws_tts_server", "--host", "0.0.0.0", "--port", "8765", "--device", "cuda", "--reference-dir", "/voices"]
