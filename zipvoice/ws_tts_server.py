@@ -84,7 +84,10 @@ class LuxTTSService:
         self.args = args
 
         self.lux_tts = LuxTTS(repo_id, device=device)
-        self.resampler = torchaudio.transforms.Resample(orig_freq=model_sr, new_freq=target_sr)
+        self.postprocess_device = "cuda" if device == "cuda" else "cpu"
+        self.resampler = torchaudio.transforms.Resample(orig_freq=model_sr, new_freq=target_sr).to(
+            self.postprocess_device
+        )
         self.prompt_cache: Dict[PromptCacheKey, Any] = {}
         self.synth_lock = asyncio.Lock()
 
@@ -136,7 +139,7 @@ class LuxTTSService:
         key = PromptCacheKey(prompt_audio=resolved_prompt, duration=duration, rms=rms)
         cached = self.prompt_cache.get(key)
         if cached is not None:
-            return cached
+            return cached, True
 
         encoded_prompt = self.lux_tts.encode_prompt(
             resolved_prompt,
@@ -144,7 +147,7 @@ class LuxTTSService:
             rms=rms,
         )
         self.prompt_cache[key] = encoded_prompt
-        return encoded_prompt
+        return encoded_prompt, False
 
     def synthesize(self, request: Dict[str, Any]) -> Tuple[bytes, Dict[str, Any]]:
         text = request["text"]
@@ -158,7 +161,11 @@ class LuxTTSService:
         return_smooth = bool(request.get("return_smooth", self.args.return_smooth))
 
         t0 = time.perf_counter()
-        encoded_prompt = self.get_encoded_prompt(prompt_audio, duration=ref_duration, rms=rms)
+        encoded_prompt, prompt_cache_hit = self.get_encoded_prompt(
+            prompt_audio,
+            duration=ref_duration,
+            rms=rms,
+        )
         prompt_encode_done_s = time.perf_counter()
 
         with torch.inference_mode():
@@ -173,7 +180,7 @@ class LuxTTSService:
             )
 
         synth_done_s = time.perf_counter()
-        wav = wav.detach().cpu().squeeze(0).to(torch.float32)
+        wav = wav.detach().to(device=self.postprocess_device, dtype=torch.float32).squeeze(0)
         wav = self.resampler(wav.unsqueeze(0)).squeeze(0)
         wav = clean_chunk_leading_edge(
             wav,
@@ -181,14 +188,19 @@ class LuxTTSService:
             trim_leading_ms=self.args.trim_leading_ms,
             fade_in_ms=self.args.fade_in_ms,
         )
+        postprocess_done_s = time.perf_counter()
         pcm_bytes = float_to_pcm16_bytes(wav)
+        pcm_ready_s = time.perf_counter()
         audio_duration_s = wav.numel() / self.target_sr
 
         metrics = {
             "audio_duration_s": audio_duration_s,
+            "prompt_cache_hit": prompt_cache_hit,
             "prompt_lookup_s": prompt_encode_done_s - t0,
             "synth_compute_s": synth_done_s - prompt_encode_done_s,
-            "total_request_s": synth_done_s - t0,
+            "postprocess_s": postprocess_done_s - synth_done_s,
+            "pcm_encode_s": pcm_ready_s - postprocess_done_s,
+            "total_request_s": pcm_ready_s - t0,
             "num_samples": int(wav.numel()),
         }
         return pcm_bytes, metrics

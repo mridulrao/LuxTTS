@@ -59,4 +59,4 @@ class LuxTTS:
         else:
             final_wav = generate(prompt_tokens, prompt_features_lens, prompt_features, prompt_rms, text, self.model, self.vocos, self.tokenizer, num_step=num_steps, guidance_scale=guidance_scale, t_shift=t_shift, speed=speed)
 
-        return final_wav.cpu()
+        return final_wav
