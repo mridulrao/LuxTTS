@@ -4,6 +4,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH \
     HF_HOME=/models/huggingface \
     TORCH_HOME=/models/torch \
     NVIDIA_VISIBLE_DEVICES=all \
@@ -24,12 +26,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1 && \
-    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
 COPY requirements.gpu.txt /app/requirements.gpu.txt
 
-RUN python -m pip install --upgrade pip setuptools wheel && \
+RUN python -m venv "$VIRTUAL_ENV" && \
+    python -m pip install --upgrade pip setuptools wheel && \
     python -m pip install \
     --index-url https://download.pytorch.org/whl/cu126 \
     torch torchaudio && \
