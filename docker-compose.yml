@@ -7,7 +7,7 @@ services:
     ports:
       - "8765:8765"
     volumes:
-      - ./voices:/voices
+      - ./zipvoice/voices:/voices
       - ./.cache/huggingface:/models/huggingface
       - ./.cache/torch:/models/torch
     command:

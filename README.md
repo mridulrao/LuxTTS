@@ -156,7 +156,7 @@ Email: yatharthsharma350@gmail.com
 ```bash
 docker build -t luxtts-ws-cpu .
 docker run --rm -p 8765:8765 \
-  -v "$(pwd)/voices:/voices" \
+  -v "$(pwd)/zipvoice/voices:/voices" \
   luxtts-ws-cpu \
   python -m zipvoice.ws_tts_server --host 0.0.0.0 --port 8765 \
   --device cpu --reference-dir /voices --prompt-audio voice_sample_female.mp3 --prewarm
@@ -168,7 +168,7 @@ Build the CUDA image and run it with the NVIDIA container runtime so the websock
 ```bash
 docker build -f Dockerfile.gpu -t luxtts-ws-gpu .
 docker run --rm --gpus all -p 8765:8765 \
-  -v "$(pwd)/voices:/voices" \
+  -v "$(pwd)/zipvoice/voices:/voices" \
   -v "$(pwd)/.cache/huggingface:/models/huggingface" \
   -v "$(pwd)/.cache/torch:/models/torch" \
   luxtts-ws-gpu \

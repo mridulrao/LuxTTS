@@ -304,21 +304,24 @@ async def async_main(args):
 
     if args.prewarm and (args.prewarm_prompt_audio or args.prompt_audio):
         print("[INIT] Running LuxTTS prewarm synthesis...")
-        await asyncio.to_thread(
-            service.synthesize,
-            {
-                "text": "Hello.",
-                "prompt_audio": args.prewarm_prompt_audio or args.prompt_audio,
-                "ref_duration": args.ref_duration,
-                "rms": args.rms,
-                "num_steps": args.num_steps,
-                "t_shift": args.t_shift,
-                "guidance_scale": args.guidance_scale,
-                "speed": args.speed,
-                "return_smooth": args.return_smooth,
-            },
-        )
-        print("[INIT] Prewarm complete")
+        try:
+            await asyncio.to_thread(
+                service.synthesize,
+                {
+                    "text": "Hello.",
+                    "prompt_audio": args.prewarm_prompt_audio or args.prompt_audio,
+                    "ref_duration": args.ref_duration,
+                    "rms": args.rms,
+                    "num_steps": args.num_steps,
+                    "t_shift": args.t_shift,
+                    "guidance_scale": args.guidance_scale,
+                    "speed": args.speed,
+                    "return_smooth": args.return_smooth,
+                },
+            )
+            print("[INIT] Prewarm complete")
+        except FileNotFoundError as exc:
+            print(f"[INIT] Skipping prewarm: {exc}")
     elif args.prewarm:
         print("[INIT] Skipping prewarm because no default prompt audio was provided")
 
