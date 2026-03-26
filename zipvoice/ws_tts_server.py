@@ -29,6 +29,36 @@ def float_to_pcm16_bytes(wav):
     return wav.cpu().numpy().tobytes()
 
 
+def clean_chunk_leading_edge(
+    wav: torch.Tensor,
+    sample_rate: int,
+    trim_leading_ms: int,
+    fade_in_ms: int,
+) -> torch.Tensor:
+    if wav.numel() == 0:
+        return wav
+
+    trim_samples = max(0, int(sample_rate * trim_leading_ms / 1000))
+    if trim_samples >= wav.numel():
+        trim_samples = 0
+    if trim_samples > 0:
+        wav = wav[trim_samples:]
+
+    fade_samples = max(0, int(sample_rate * fade_in_ms / 1000))
+    fade_samples = min(fade_samples, wav.numel())
+    if fade_samples > 1:
+        wav = wav.clone()
+        wav[:fade_samples] *= torch.linspace(
+            0.0,
+            1.0,
+            fade_samples,
+            device=wav.device,
+            dtype=wav.dtype,
+        )
+
+    return wav
+
+
 @dataclass(frozen=True)
 class PromptCacheKey:
     prompt_audio: str
@@ -145,6 +175,12 @@ class LuxTTSService:
         synth_done_s = time.perf_counter()
         wav = wav.detach().cpu().squeeze(0).to(torch.float32)
         wav = self.resampler(wav.unsqueeze(0)).squeeze(0)
+        wav = clean_chunk_leading_edge(
+            wav,
+            sample_rate=self.target_sr,
+            trim_leading_ms=self.args.trim_leading_ms,
+            fade_in_ms=self.args.fade_in_ms,
+        )
         pcm_bytes = float_to_pcm16_bytes(wav)
         audio_duration_s = wav.numel() / self.target_sr
 
@@ -375,10 +411,22 @@ def build_parser():
     parser.add_argument("--ref-duration", type=float, default=4.0)
     parser.add_argument("--rms", type=float, default=0.01)
     parser.add_argument("--num-steps", type=int, default=2)
-    parser.add_argument("--t-shift", type=float, default=0.65)
-    parser.add_argument("--guidance-scale", type=float, default=2.5)
-    parser.add_argument("--speed", type=float, default=0.8)
+    parser.add_argument("--t-shift", type=float, default=0.5)
+    parser.add_argument("--guidance-scale", type=float, default=2.0)
+    parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--return-smooth", action="store_true")
+    parser.add_argument(
+        "--trim-leading-ms",
+        type=int,
+        default=20,
+        help="Trim a small leading transient from each synthesized chunk",
+    )
+    parser.add_argument(
+        "--fade-in-ms",
+        type=int,
+        default=25,
+        help="Apply a short fade-in to reduce click/noise at chunk start",
+    )
     parser.add_argument("--stream-mode", type=str, default="word")
     parser.add_argument("--word-delay-s", type=float, default=0.12)
     parser.add_argument("--first-min-words", type=int, default=6)

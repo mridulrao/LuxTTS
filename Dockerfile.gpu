@@ -1,4 +1,8 @@
-FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu24.04
+
+ARG TORCH_VERSION=2.5.0
+ARG TORCHAUDIO_VERSION=2.5.0
+ARG K2_VERSION=1.24.4.dev20241018+cuda12.4.torch2.5.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -33,8 +37,12 @@ COPY requirements.gpu.txt /app/requirements.gpu.txt
 RUN python -m venv "$VIRTUAL_ENV" && \
     python -m pip install --upgrade pip setuptools wheel && \
     python -m pip install \
-    --index-url https://download.pytorch.org/whl/cu126 \
-    torch torchaudio && \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    "torch==${TORCH_VERSION}" \
+    "torchaudio==${TORCHAUDIO_VERSION}" && \
+    python -m pip install \
+    "k2==${K2_VERSION}" \
+    -f https://k2-fsa.github.io/k2/cuda.html && \
     python -m pip install -r /app/requirements.gpu.txt
 
 COPY . /app
