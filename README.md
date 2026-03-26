@@ -149,3 +149,35 @@ The model and code are licensed under the Apache-2.0 license. See LICENSE for de
 Stars/Likes would be appreciated, thank you.
 
 Email: yatharthsharma350@gmail.com
+
+## Docker
+
+### CPU websocket server
+```bash
+docker build -t luxtts-ws-cpu .
+docker run --rm -p 8765:8765 \
+  -v "$(pwd)/voices:/voices" \
+  luxtts-ws-cpu \
+  python -m zipvoice.ws_tts_server --host 0.0.0.0 --port 8765 \
+  --device cpu --reference-dir /voices --prompt-audio voice_sample_female.mp3 --prewarm
+```
+
+### GPU websocket server
+Build the CUDA image and run it with the NVIDIA container runtime so the websocket endpoint is still exposed on `ws://localhost:8765`.
+
+```bash
+docker build -f Dockerfile.gpu -t luxtts-ws-gpu .
+docker run --rm --gpus all -p 8765:8765 \
+  -v "$(pwd)/voices:/voices" \
+  -v "$(pwd)/.cache/huggingface:/models/huggingface" \
+  -v "$(pwd)/.cache/torch:/models/torch" \
+  luxtts-ws-gpu \
+  python -m zipvoice.ws_tts_server --host 0.0.0.0 --port 8765 \
+  --device cuda --reference-dir /voices --prompt-audio voice_sample_female.mp3 --prewarm
+```
+
+If you prefer Compose, use:
+
+```bash
+docker compose -f docker-compose.gpu.yml up --build
+```

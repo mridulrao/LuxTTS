@@ -1,15 +1,16 @@
 services:
-  luxtts-ws:
+  luxtts-ws-gpu:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: luxtts-ws
+      dockerfile: Dockerfile.gpu
+    container_name: luxtts-ws-gpu
     ports:
       - "8765:8765"
     volumes:
       - ./voices:/voices
       - ./.cache/huggingface:/models/huggingface
       - ./.cache/torch:/models/torch
+    gpus: all
     command:
       - python
       - -m
@@ -19,7 +20,7 @@ services:
       - --port
       - "8765"
       - --device
-      - cpu
+      - cuda
       - --reference-dir
       - /voices
       - --prompt-audio
