@@ -89,6 +89,7 @@ class LuxTTSService:
             self.postprocess_device
         )
         self.prompt_cache: Dict[PromptCacheKey, Any] = {}
+        self.default_prompt_key: Optional[PromptCacheKey] = None
         self.synth_lock = asyncio.Lock()
 
     def model_info(self) -> Dict[str, Any]:
@@ -149,6 +150,19 @@ class LuxTTSService:
         self.prompt_cache[key] = encoded_prompt
         return encoded_prompt, False
 
+    def set_default_prompt_cache(self, prompt_audio: str, duration: float, rms: float):
+        resolved_prompt = self.resolve_prompt_audio(prompt_audio)
+        self.default_prompt_key = PromptCacheKey(
+            prompt_audio=resolved_prompt,
+            duration=duration,
+            rms=rms,
+        )
+
+    def get_default_prompt_cached(self):
+        if self.default_prompt_key is None:
+            return None
+        return self.prompt_cache.get(self.default_prompt_key)
+
     def synthesize(self, request: Dict[str, Any]) -> Tuple[bytes, Dict[str, Any]]:
         text = request["text"]
         prompt_audio = request["prompt_audio"]
@@ -161,11 +175,22 @@ class LuxTTSService:
         return_smooth = bool(request.get("return_smooth", self.args.return_smooth))
 
         t0 = time.perf_counter()
-        encoded_prompt, prompt_cache_hit = self.get_encoded_prompt(
-            prompt_audio,
-            duration=ref_duration,
-            rms=rms,
-        )
+        default_prompt = self.get_default_prompt_cached()
+        if (
+            default_prompt is not None
+            and self.default_prompt_key is not None
+            and prompt_audio == Path(self.default_prompt_key.prompt_audio).name
+            and ref_duration == self.default_prompt_key.duration
+            and rms == self.default_prompt_key.rms
+        ):
+            encoded_prompt = default_prompt
+            prompt_cache_hit = True
+        else:
+            encoded_prompt, prompt_cache_hit = self.get_encoded_prompt(
+                prompt_audio,
+                duration=ref_duration,
+                rms=rms,
+            )
         prompt_encode_done_s = time.perf_counter()
 
         with torch.inference_mode():
@@ -326,6 +351,26 @@ async def handle_socket(ws, service: LuxTTSService, args):
                     },
                 },
             )
+            print(
+                "[REQ]",
+                json.dumps(
+                    {
+                        "request_id": request_id,
+                        "prompt_audio": message.get("prompt_audio"),
+                        "text_chars": len(message.get("text", "")),
+                        "metrics": {
+                            **metrics,
+                            "time_to_first_audio_chunk_s": (
+                                first_chunk_sent_s - started_s if first_chunk_sent_s else 0.0
+                            ),
+                            "server_elapsed_s": time.perf_counter() - started_s,
+                            "synth_ready_s": synth_ready_s - started_s,
+                            "chunks_sent": chunk_count,
+                        },
+                    }
+                ),
+                flush=True,
+            )
             await send_json(
                 ws,
                 {
@@ -353,6 +398,11 @@ async def async_main(args):
     if args.prewarm and (args.prewarm_prompt_audio or args.prompt_audio):
         print("[INIT] Running LuxTTS prewarm synthesis...")
         try:
+            service.set_default_prompt_cache(
+                args.prewarm_prompt_audio or args.prompt_audio,
+                duration=args.ref_duration,
+                rms=args.rms,
+            )
             await asyncio.to_thread(
                 service.synthesize,
                 {
