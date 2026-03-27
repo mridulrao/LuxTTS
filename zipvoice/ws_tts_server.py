@@ -486,7 +486,7 @@ def build_parser():
     parser.add_argument(
         "--fade-in-ms",
         type=int,
-        default=25,
+        default=35,
         help="Apply a short fade-in to reduce click/noise at chunk start",
     )
     parser.add_argument("--stream-mode", type=str, default="word")
